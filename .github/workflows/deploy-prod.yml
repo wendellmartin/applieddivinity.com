@@ -1,0 +1,57 @@
+name: Deploy to Production
+on:
+  workflow_dispatch:
+    inputs:
+      version_tag:
+        description: 'Version tag to deploy (e.g., v1.1.0). Leave blank for current.'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+jobs:
+  production-deploy:
+    runs-on: ubuntu-latest
+    env:
+      CPANEL_URL: ${{ secrets.CPANEL_URL }}
+      CPANEL_USERNAME: ${{ secrets.CPANEL_USERNAME }}
+      CPANEL_PASSWORD: ${{ secrets.CPANEL_PASSWORD }}
+      CPANEL_PROD_HOME: ${{ secrets.CPANEL_PROD_HOME }}
+      DEPLOY_TEMP_DIR: ${{ secrets.DEPLOY_TEMP_DIR }}
+    
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # If a tag is provided, checkout that specific version
+          ref: ${{ github.event.inputs.version_tag || 'main' }}
+          fetch-depth: 0
+          clean: true
+
+
+      - name: Deploy to Prod
+        run: |
+
+          # 2. If no tag, force-sync to origin main
+          if [[ "${{ github.event.inputs.version_tag }}" == "" ]]; then
+            echo "Syncing to latest main..."
+            git fetch origin main
+            git reset --hard origin/main
+          fi
+
+          source .github/scripts/utils.sh
+          
+          # 1. Get the artifact name for production
+          ARTIFACT_NAME=$(get_artifact_name "prod")
+          
+
+          # 2. Build the production zip
+          echo "Creating artifact: $ARTIFACT_NAME for production"
+          create_artifact "$ARTIFACT_NAME"
+          
+          # 3. Upload and Unzip
+          upload_artifact "$ARTIFACT_NAME" "$DEPLOY_TEMP_DIR" "$CPANEL_USERNAME" "$CPANEL_PASSWORD" "$CPANEL_URL"
+          unzip_server_artifact "$ARTIFACT_NAME" "$DEPLOY_TEMP_DIR" "$CPANEL_PROD_HOME" "$CPANEL_USERNAME" "$CPANEL_PASSWORD" "$CPANEL_URL"
+

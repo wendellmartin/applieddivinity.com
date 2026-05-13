@@ -1,0 +1,106 @@
+name: Auto Deploy to Dev (with Tests)
+on:
+  push:
+    branches:
+      - main
+permissions:
+  contents: write
+env:
+  # Opt into Node.js 24 now to catch issues before the June 2nd, 2026 deadline
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set permissions and show variables
+        run: |
+          chmod +x .github/scripts/*
+          source .github/scripts/utils.sh
+          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
+
+          echo "Repository name: $(get_repository_name)"
+          echo "Repository organization: $(get_organization)"
+          echo "Current version: $(get_version)"
+
+      - name: Clean deploy environments
+        env:
+          DEPLOY_TEMP_DIR: ${{ secrets.DEPLOY_TEMP_DIR }}
+          CPANEL_USERNAME: ${{ secrets.CPANEL_USERNAME }}
+          CPANEL_PASSWORD: ${{ secrets.CPANEL_PASSWORD }}
+          CPANEL_URL: ${{ secrets.CPANEL_URL }}
+        run: |
+          source .github/scripts/utils.sh
+          echo "Cleaning candidate environment"
+          remove_server_item "$DEPLOY_TEMP_DIR"
+
+      # Deploy to candidate environment (replace with your logic)
+      - name: Deploy to Candidate
+        run: |
+          source .github/scripts/utils.sh
+          ARTIFACT_NAME=$(get_artifact_name "candidate")
+          
+          echo "Deploying artifact: $ARTIFACT_NAME to candidate environment"
+          create_artifact "$ARTIFACT_NAME"
+
+          echo "${{ secrets.CPANEL_URL }}" | sed 's/./& /g'
+          # upload_artifact "$ARTIFACT_NAME" "${{ secrets.DEPLOY_TEMP_DIR }}" "${{ secrets.CPANEL_USERNAME }}" "${{ secrets.CPANEL_PASSWORD }}" "${{ secrets.CPANEL_URL }}"
+          
+          echo "Unzipping artifact on server"
+          # unzip_server_artifact "$ARTIFACT_NAME" "${{ secrets.DEPLOY_TEMP_DIR }}" "${{ secrets.CPANEL_CANDIDATE_HOME }}" "${{ secrets.CPANEL_USERNAME }}" "${{ secrets.CPANEL_PASSWORD }}" "${{ secrets.CPANEL_URL }}"
+
+      #Run tests against the candidate environment
+      - name: Run Candidate Tests
+        run: |
+          # Install linkchecker
+          sudo apt-get update && sudo apt-get install linkchecker -y
+
+          # Run linkchecker on your local files (you may need to adjust the path)
+          # linkchecker -v --no-robots "${{ secrets.SERVER_HOST_CANDIDATE }}"
+          linkchecker -v  "${{ secrets.SERVER_HOST_CANDIDATE }}"
+
+      - name: Bump Version
+        run: |
+          # Bump version (auto-increment patch)
+          .github/scripts/version.sh auto
+
+
+      - name: Deploy to Dev
+        run: |
+          source .github/scripts/utils.sh
+
+          ARTIFACT_NAME=$(get_artifact_name "dev")
+          echo "Deploying artifact: $ARTIFACT_NAME to dev environment"
+          ls -lah
+          create_artifact "$ARTIFACT_NAME"
+          upload_artifact "$ARTIFACT_NAME" "${{ secrets.DEPLOY_TEMP_DIR }}" "${{ secrets.CPANEL_USERNAME }}" "${{ secrets.CPANEL_PASSWORD }}" "${{ secrets.CPANEL_URL }}"
+          ls -lah
+
+          echo "Unzipping artifact on server"
+          unzip_server_artifact "$ARTIFACT_NAME" "${{ secrets.DEPLOY_TEMP_DIR }}" "${{ secrets.CPANEL_DEV_HOME }}" "${{ secrets.CPANEL_USERNAME }}" "${{ secrets.CPANEL_PASSWORD }}" "${{ secrets.CPANEL_URL }}"
+
+      - name: Run Dev Tests
+        run: |
+          # Run linkchecker on your local files (you may need to adjust the path)
+          linkchecker -v "${{ secrets.SERVER_HOST_DEV }}"
+
+      - name: Remove candidate artifact
+        env:
+          DEPLOY_TEMP_DIR: ${{ secrets.DEPLOY_TEMP_DIR }}
+          CPANEL_CANDIDATE_HOME: ${{ secrets.CPANEL_CANDIDATE_HOME }}
+          CPANEL_USERNAME: ${{ secrets.CPANEL_USERNAME }}
+          CPANEL_PASSWORD: ${{ secrets.CPANEL_PASSWORD }}
+          CPANEL_URL: ${{ secrets.CPANEL_URL }}
+        run: |
+          source .github/scripts/utils.sh
+          ARTIFACT_NAME=$(get_artifact_name "candidate")
+          
+          echo "Removing artifact: $ARTIFACT_NAME from candidate environment"
+
+          remove_server_deployment "candidate"
+
+

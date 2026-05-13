@@ -1,0 +1,55 @@
+name: Deploy & Test Website
+
+on:
+  push:
+    branches:
+      - main  # Trigger on pushes to main
+  workflow_dispatch:  # Allow manual triggering for production deployment
+
+jobs:
+  build-test-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # Needed for checkout
+      id-token: write # For GitHub Pages deployment
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Install dependencies (linkchecker)
+      - name: Setup Linkchecker
+        run: |
+          sudo apt-get update && sudo apt-get install linkchecker -y
+
+      # Run tests (broken links)
+      - name: Check Links
+        run: |
+          linkchecker --check-extern src/web/index.html
+          # Add more files/directories as needed
+
+      # Deploy to GitHub Pages (staging)
+      - name: Deploy to GitHub Pages
+        if: success()  # Only deploy if tests pass
+        uses: actions/deploy-pages@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          publish_mode: squash
+          publish_dir: ./src/web  # Path to your site files
+
+      # Deploy to Exabytes (production) only if manually triggered
+      - name: Deploy to Production (Exabytes)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          # Setup SSH
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          
+          # Sync files to server
+          rsync -avz -e "ssh -o StrictHostKeyChecking=no" src/web/ "$SERVER_USER@$SERVER_HOST:$DEPLOY_PATH"
